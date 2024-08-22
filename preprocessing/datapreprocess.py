@@ -4,7 +4,7 @@ from scipy.interpolate import interp1d
 from sklearn.preprocessing import StandardScaler
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LinearRegression,LassoCV
+from sklearn.linear_model import LinearRegression, LassoCV
 from sklearn.feature_selection import SequentialFeatureSelector
 from sklearn.model_selection import train_test_split
 
@@ -320,9 +320,8 @@ def feature_selection(X_train: pd.DataFrame, y: pd.Series, way="all") -> dict:
         lasso.fit(X_train_std, y)
         coefs = lasso.coef_
         selected_features = X_train_std.columns[abs(coefs) > 0]
-        
         print(pd.Series(coefs, index=X_train_std.columns).sort_values(ascending=False))
-
+        
         # 使用选择的特征训练新的模型并评分
         X_train_selected = X_train_std[selected_features]
         lasso.fit(X_train_selected, y)

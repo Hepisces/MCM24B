@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from scipy.interpolate import interp1d
+from sklearn.preprocessing import StandardScaler
 
 
 def missing_check(df, pre=True):
@@ -84,10 +85,7 @@ def data_describe(df) -> None:
     print(math_info)
 
 
-
-
-
-def replace_outliers(df, column, method='median'):
+def replace_outliers(df, column, method="median"):
     """
     用于异常值替换的函数。支持中位数、均值、前后值插值和线性插值替换方法。
 
@@ -99,47 +97,121 @@ def replace_outliers(df, column, method='median'):
     返回:
     - df: DataFrame,已处理的DataFrame。
     """
-    
+
     # 计算IQR来识别异常值的上下界
     Q1 = df[column].quantile(0.25)
     Q3 = df[column].quantile(0.75)
     IQR = Q3 - Q1
-    
+
     lower_bound = Q1 - 1.5 * IQR
     upper_bound = Q3 + 1.5 * IQR
 
     # 标记异常值为NaN
-    df[column] = df[column].apply(lambda x: np.nan if x < lower_bound or x > upper_bound else x)
+    df[column] = df[column].apply(
+        lambda x: np.nan if x < lower_bound or x > upper_bound else x
+    )
 
-    if method == 'median':
+    if method == "median":
         # 使用中位数替换NaN值
         median_value = df[column].median()
         df[column].fillna(median_value, inplace=True)
-    
-    elif method == 'mean':
+
+    elif method == "mean":
         # 使用均值替换NaN值
         mean_value = df[column].mean()
         df[column].fillna(mean_value, inplace=True)
-    
-    elif method == 'ffill':
+
+    elif method == "ffill":
         # 使用前一个有效值替换NaN值
-        df[column].fillna(method='ffill', inplace=True)
-    
-    elif method == 'bfill':
+        df[column].fillna(method="ffill", inplace=True)
+
+    elif method == "bfill":
         # 使用后一个有效值替换NaN值
-        df[column].fillna(method='bfill', inplace=True)
-    
-    elif method == 'linear':
+        df[column].fillna(method="bfill", inplace=True)
+
+    elif method == "linear":
         # 使用线性插值替换NaN值
         x = np.arange(len(df))
         y = df[column].values
         mask = ~np.isnan(y)
-        f = interp1d(x[mask], y[mask], kind='linear', fill_value="extrapolate")
+        f = interp1d(x[mask], y[mask], kind="linear", fill_value="extrapolate")
         df[column] = f(x)
-    
+
     else:
-        raise ValueError("属于replace_outliers函数的method参数只能是 'median', 'mean', 'ffill', 'bfill', 'linear'.")
-    
+        raise ValueError(
+            "属于replace_outliers函数的method参数只能是 'median', 'mean', 'ffill', 'bfill', 'linear'."
+        )
+
     return df
 
-def 
+
+def uniform_data(df: pd.DataFrame, col_operations: dict) -> pd.DataFrame:
+    """
+    对DataFrame进行数据一致化处理并进行无量纲化。
+
+    参数:
+    - df (pd.DataFrame): 需要处理的DataFrame。
+    - col_operations (dict): 一个字典，键是列名，值是一个列表。
+        列表的第一个元素是操作类型，可以是'min'、'max'、'mid'或'range'。
+        如果操作类型为'range'，列表的后两个元素应为对应区间[a, b]。
+
+    返回值:
+    - pd.DataFrame: 处理并无量纲化后的DataFrame。
+    """
+
+    # 定义极小型操作
+    def min_operation(col):
+        return col.min(), col.max(), (col.max() - col)
+
+    # 定义极大型操作
+    def max_operation(col):
+        return col.min(), col.max(), col
+
+    # 定义中间型操作
+    def mid_operation(col):
+        min_val, max_val = col.min(), col.max()
+        mid_val = (min_val + max_val) / 2
+        return min_val, max_val, 1 - abs(col - mid_val) / (mid_val - min_val)
+
+    # 定义区间型操作
+    def range_operation(col, a, b):
+        min_val, max_val = col.min(), col.max()
+        c = max(a - min_val, max_val - b)
+
+        def apply_range(x):
+            if a <= x <= b:
+                return 1
+            elif x < a:
+                return 1 - (a - x) / c
+            else:
+                return 1 - (x - b) / c
+
+        return a, b, col.apply(apply_range)
+
+    # 操作类型与对应函数的映射
+    operations = {
+        "min": min_operation,
+        "max": max_operation,
+        "mid": mid_operation,
+        "range": range_operation,
+    }
+
+    # 创建一个副本以避免修改原始DataFrame
+    processed_df = df.copy()
+
+    # 对每一列按照指定的操作进行处理
+    for col, ops in col_operations.items():
+        operation = ops[0]
+        if operation == "range":
+            a, b = ops[1], ops[2]
+            _, _, processed_df[col] = operations[operation](processed_df[col], a, b)
+        else:
+            _, _, processed_df[col] = operations[operation](processed_df[col])
+
+    # 使用StandardScaler进行无量纲化处理
+    scaler = StandardScaler()
+    processed_df = pd.DataFrame(
+        scaler.fit_transform(processed_df), columns=processed_df.columns
+    )
+
+    return processed_df

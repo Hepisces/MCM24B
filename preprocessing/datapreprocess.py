@@ -2,6 +2,11 @@ import pandas as pd
 import numpy as np
 from scipy.interpolate import interp1d
 from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LinearRegression,LassoCV
+from sklearn.feature_selection import SequentialFeatureSelector
+from sklearn.model_selection import train_test_split
 
 
 def missing_check(df, pre=True):
@@ -156,7 +161,7 @@ def uniform_data(df: pd.DataFrame, col_operations: dict) -> pd.DataFrame:
         如果操作类型为'range'，列表的后两个元素应为对应区间[a, b]。
 
     返回值:
-    - pd.DataFrame: 处理并无量纲化后的DataFrame。
+    - pd.DataFrame: 处理后的DataFrame。
     """
 
     # 定义极小型操作
@@ -196,7 +201,6 @@ def uniform_data(df: pd.DataFrame, col_operations: dict) -> pd.DataFrame:
         "range": range_operation,
     }
 
-    # 创建一个副本以避免修改原始DataFrame
     processed_df = df.copy()
 
     # 对每一列按照指定的操作进行处理
@@ -208,10 +212,123 @@ def uniform_data(df: pd.DataFrame, col_operations: dict) -> pd.DataFrame:
         else:
             _, _, processed_df[col] = operations[operation](processed_df[col])
 
-    # 使用StandardScaler进行无量纲化处理
-    scaler = StandardScaler()
-    processed_df = pd.DataFrame(
-        scaler.fit_transform(processed_df), columns=processed_df.columns
-    )
-
     return processed_df
+
+
+def standard_scale(df: pd.DataFrame, way: str = "standard") -> pd.DataFrame:
+    """
+    对DataFrame进行标准化处理。
+
+    参数:
+    - df (pd.DataFrame): 需要处理的DataFrame。
+    - way (str): 标准化方法，可选'standard'（标准化）或'minmax'（最小最大值标准化）。
+
+    返回值:
+    - pd.DataFrame: 处理并标准化后的DataFrame。
+    """
+    if way == "standard":
+        scaler = StandardScaler()
+    elif way == "minmax":
+        scaler = MinMaxScaler()
+    else:
+        raise ValueError("属于standard_scale函数的way参数只能是'standard'或'minmax'.")
+    scaled_df = pd.DataFrame(
+        scaler.fit_transform(df),
+        columns=df.select_dtypes(include=["float64", "int64"]).columns,
+        index=df.index,
+    )
+    return scaled_df
+
+
+def split(
+    df: pd.DataFrame,
+    target: str,
+    test_size=0.3,
+    random_state: int = 42,
+) -> tuple:
+    """
+    对DataFrame进行训练集和测试集的划分。
+
+    参数:
+    - df (pd.DataFrame): 需要划分的DataFrame。
+    - test_size (float): 测试集占比，默认0.3。
+    - random_state (int): 随机种子，默认42。
+
+    返回值:
+    - tuple: 训练集和测试集。
+    """
+    X_train, X_test, y_train, y_test = train_test_split(
+        df.drop(target, axis=1),
+        df[target],
+        test_size=test_size,
+        random_state=random_state,
+    )
+    return X_train, X_test, y_train, y_test
+
+
+def feature_selection(X_train: pd.DataFrame, y: pd.Series, way="all") -> dict:
+    """
+    特征选择函数，根据指定的方法选择特征，并打印各自的选择结果。
+
+    参数:
+    - X_train: DataFrame，训练特征数据。
+    - y: Series，目标变量。
+    - way: str，特征选择方法。可选 'RandomForest'（随机森林）、'ForwardSelection'（向前逐步回归）、'Lasso'（Lasso回归）、'all'（所有方法）。
+
+    返回:
+    - results: dict，包含各方法选择的特征。
+    """
+    results = {}
+
+    if way in ["RandomForest", "all"]:
+        print("RandomForest特征选择结果:")
+        rf = RandomForestClassifier()
+        rf.fit(X_train, y)
+        importances = rf.feature_importances_
+        feature_importances = pd.Series(importances, index=X_train.columns).sort_values(
+            ascending=False
+        )
+        print(feature_importances)
+        print("Accuracy:", rf.score(X_train, y))
+        print("---------")
+        results["RandomForest"] = [feature_importances.index.tolist(), rf]
+
+    if way in ["ForwardSelection", "all"]:
+        print("向前逐步回归特征选择结果:")
+        X_train_std = standard_scale(X_train)
+        sfs = SequentialFeatureSelector(
+            LinearRegression(), n_features_to_select="auto", direction="forward"
+        )
+        sfs.fit(X_train_std, y)
+        selected_features = X_train_std.columns[sfs.get_support()]
+
+        # 使用选择的特征训练新的模型并评分
+        X_train_selected = X_train_std[selected_features]
+        rf_selected = RandomForestClassifier()
+        rf_selected.fit(X_train_selected, y)
+        accuracy = rf_selected.score(X_train_selected, y)
+
+        print(selected_features)
+        print("Accuracy:", accuracy)
+        print("---------")
+        results["ForwardSelection"] = [selected_features.tolist(), rf_selected]
+
+    if way in ["Lasso", "all"]:
+        print("Lasso回归特征选择结果:")
+        X_train_std = standard_scale(X_train)
+        lasso = LassoCV()
+        lasso.fit(X_train_std, y)
+        coefs = lasso.coef_
+        selected_features = X_train_std.columns[abs(coefs) > 0]
+        
+        print(pd.Series(coefs, index=X_train_std.columns).sort_values(ascending=False))
+
+        # 使用选择的特征训练新的模型并评分
+        X_train_selected = X_train_std[selected_features]
+        lasso.fit(X_train_selected, y)
+        accuracy = lasso.score(X_train_selected, y)
+        print("Accuracy:", accuracy)
+        print("---------")
+        results["Lasso"] = [selected_features.tolist(), lasso]
+
+    return results
